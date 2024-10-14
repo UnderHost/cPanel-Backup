@@ -1,66 +1,103 @@
 # Automated cPanel Backup Script (Updated for Jupiter Theme)
 
-This PHP script automates cPanel full backups using the Jupiter theme and uploads them to a remote FTP server. It also sends a notification email upon completion.
+This repository contains a PHP script to automate the process of creating a full cPanel backup and transferring it via FTP. You can choose to back up either to your home directory or directly to an FTP server.
 
-## Requirements
+## Prerequisites
 
 - PHP installed on your server.
-- cPanel access with API token support.
-- FTP server credentials to store the backup.
+- cURL enabled for PHP.
+- FTP server to store the backup files.
+- cPanel API token.
 
-## Configuration
+## Getting Started
 
-### 1. Update the Script
+### Clone the Repository
 
-Edit the PHP script and replace the placeholders with your actual details:
+To use this script, clone the repository to your server:
 
-- **cPanel credentials**:
-  - `your_cpanel_username`: Your cPanel username.
-  - `your_api_token`: The API token generated from your cPanel account.
-  - `your_domain.com`: Your domain where cPanel is hosted.
-  - `your_cpsession_id`: The current cPanel session ID. You can find this when logged into your cPanel in the URL.
+```
+git clone https://github.com/yourusername/cpanel-backup-script.git
+cd cpanel-backup-script
+```
 
-- **FTP credentials**:
-  - `your_ftp_username`: The username for your FTP account.
-  - `your_ftp_password`: The password for your FTP account.
-  - `your_ftp_host`: The FTP server’s hostname or IP address.
-
-- **Email address**:
-  - `youremail@example.com`: Your email address to receive notifications about the backup status.
-
-### 2. Create a cPanel API Token
-
-To generate an API token for authentication:
+### Setting Up cPanel API Token
 
 1. Log in to your cPanel account.
-2. Go to **Security** > **API Tokens**.
-3. Click **Create Token**.
-4. Enter a name for your token (e.g., `BackupScriptToken`).
-5. Set the token permissions to allow backups.
-6. Copy the token and paste it into the script in place of `your_api_token`.
+2. Navigate to **Security** > **API Tokens**.
+3. Click on **Create** to generate a new token.
+4. Provide a name for the token and set the required permissions.
+   - Make sure you grant sufficient permissions for backup operations.
+5. Copy the generated token and replace the `$cpanel_token` value in the script.
 
-### 3. Set Up a Cron Job
+### Configuration
 
-To automate the backup process, set up a cron job to run the script at your preferred time interval.
+Edit the `backup.php` script to include your cPanel and FTP details:
 
-1. Log in to your hosting control panel (cPanel or SSH).
-2. Go to **Cron Jobs**.
-3. Add a new cron job and schedule it. For example, to run the script every day at midnight:
+```
+// cPanel credentials and details
+$cpanel_host = 'your_cpanel_host.com';
+$cpanel_user = 'your_cpanel_username';
+$cpanel_token = 'your_api_token';
 
-0 0 * * * /usr/bin/php /path/to/your/backup.php
+// FTP credentials
+$ftp_host = 'ftp.example.com';
+$ftp_user = 'ftp_username';
+$ftp_pass = 'ftp_password';
+$ftp_path = '/backups';  // Path on the FTP server to store backups
 
-Make sure to replace `/path/to/your/backup.php` with the actual path to the PHP script on your server.
+// Backup settings
+$backup_type = 'ftp'; // Choose between 'homedir' or 'ftp'
+```
 
-### 4. How to Use
+```
+php backup.php
+```
 
-1. Upload the script to your server (preferably outside of your public HTML directory for security).
-2. Ensure the script has the necessary permissions to run.
-3. You can run the script manually via the command line or set it up with a cron job for automation.
+## Automating Backups with Cron
 
-### 5. Security Considerations
+To automate the backup process, you can set up a cron job to run the script at your desired interval.
 
-1. Keep the script secure: Do not store this script in publicly accessible directories. It contains sensitive information like API tokens and FTP credentials.
-2. Use SSL: If your cPanel supports SSL, ensure it is enabled to encrypt communication between the script and the cPanel server.
+### Setting Up Scheduled Tasks (Cron Jobs) via cPanel
+
+1. Log in to your cPanel account.
+2. Navigate to **Advanced** > **Cron Jobs**.
+3. Under **Add New Cron Job**, set the desired frequency (e.g., to run every day at 2 AM, use `0 2 * * *`).
+4. In the **Command** field, enter the following:
+
+```
+/usr/bin/php /path/to/backup.php >> /home/yourcpanelusername/backup.log 2>&1
+```
+
+Replace `/path/to/backup.php` with the full path to the script on your server, and `yourcpanelusername` with your cPanel username.
+
+## Script Overview
+
+The script uses cPanel's JSON API to create a backup. You can choose between backing up to your home directory (`homedir`) or to an FTP server (`ftp`).
+
+- **cPanel credentials**: Provide your cPanel host, username, and API token.
+- **FTP credentials**: Provide the details of the FTP server where you want to store the backup.
+- **Backup settings**: You can switch between `ftp` and `homedir` for the backup destination.
+
+### Example Configuration
+
+```
+$cpanel_host = 'your_cpanel_host.com';
+$cpanel_user = 'your_cpanel_username';
+$cpanel_token = 'your_api_token';
+
+$ftp_host = 'ftp.example.com';
+$ftp_user = 'ftp_username';
+$ftp_pass = 'ftp_password';
+$ftp_path = '/backups';
+
+$backup_type = 'ftp'; // Change to 'homedir' if needed
+```
+
+
+## Troubleshooting
+
+- **Error: SSL Verification**: If you encounter SSL verification issues, ensure that your PHP installation has the correct SSL certificates. You can also disable SSL verification by modifying the cURL options in the script (not recommended for production).
+- **Backup Failure**: Ensure that the API token has the correct permissions and that the FTP credentials are accurate.
 
 
 ## Support
