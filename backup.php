@@ -5,7 +5,7 @@
 $cpuser = "your_cpanel_username"; // Username used to login to cPanel
 $api_token = "your_api_token"; // API Token from cPanel (create in cPanel -> Security -> API Tokens)
 $domain = "your_domain.com"; // Domain name where cPanel is run
-$cpsess_id = "your_cpsession_id"; // The current cPanel session ID
+
 
 // Info required for FTP host
 $ftpuser = "your_ftp_username"; // Username for FTP account
@@ -21,7 +21,7 @@ $notifyemail = "youremail@example.com"; // Email address to send results
 $backup_type = "ftp";
 
 // Construct the API URL with the session ID and Jupiter theme
-$url = "https://$domain:2083/cpsess$cpsess_id/frontend/jupiter/backup/fullbackup.html";
+$url = $domain . "/frontend/" . $theme . "/backup/dofullbackup.html";
 
 // API request parameters
 $params = [
