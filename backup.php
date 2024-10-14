@@ -1,51 +1,67 @@
 <?php
-// Configurations
-$cpuser = "your_cpanel_username";
-$cppass = "your_cpanel_password";
-$domain = "your_domain.com";
-$backup_type = 'homedir';  // Change to 'ftp' for FTP backup
-$ftp_server = "ftp.yourbackupserver.com";
-$ftp_username = "your_ftp_username";
-$ftp_password = "your_ftp_password";
-$email = "your_email@example.com";
+// ********* THE FOLLOWING ITEMS NEED TO BE CONFIGURED *********
 
-// Function to initiate backup
-function initiate_backup() {
-    global $cpuser, $cppass, $domain, $backup_type, $ftp_server, $ftp_username, $ftp_password;
+// Info required for cPanel access
+$cpuser = "your_cpanel_username"; // Username used to login to cPanel
+$api_token = "your_api_token"; // API Token from cPanel (create in cPanel -> Security -> API Tokens)
+$domain = "your_domain.com"; // Domain name where cPanel is run
+$cpsess_id = "your_cpsession_id"; // The current cPanel session ID
 
-    $auth = base64_encode($cpuser.":".$cppass);
-    $url = "https://".$domain.":2083/execute/Backup/";
+// Info required for FTP host
+$ftpuser = "your_ftp_username"; // Username for FTP account
+$ftppass = "your_ftp_password"; // Password for FTP account
+$ftphost = "your_ftp_host"; // Full hostname or IP address for FTP host
 
-    if ($backup_type == 'homedir') {
-        $url .= "fullbackup_to_homedir";
-    } else {
-        $url .= "fullbackup_to_ftp";
-        $url .= "?ftp_server=".$ftp_server."&ftp_user=".$ftp_username."&ftp_pass=".$ftp_password;
-    }
+// Notification information
+$notifyemail = "youremail@example.com"; // Email address to send results
 
-    $options = [
-        "http" => [
-            "header" => "Authorization: Basic $auth",
-        ],
-    ];
-    $context = stream_context_create($options);
-    $response = file_get_contents($url, false, $context);
+// *********** NO CONFIGURATION ITEMS BELOW THIS LINE *********
 
-    if ($response === FALSE) { 
-        return "Error occurred";
-    }
+// Set the backup destination to FTP
+$backup_type = "ftp";
 
-    return $response;
+// Construct the API URL with the session ID and Jupiter theme
+$url = "https://$domain:2083/cpsess$cpsess_id/frontend/jupiter/backup/fullbackup.html";
+
+// API request parameters
+$params = [
+    'dest' => $backup_type,
+    'email' => $notifyemail,
+    'server' => $ftphost,
+    'user' => $ftpuser,
+    'pass' => $ftppass
+];
+
+// Set the headers with the API token for authentication
+$headers = [
+    "Authorization: cpanel $cpuser:$api_token"
+];
+
+// Initialize cURL
+$ch = curl_init();
+
+// Set cURL options
+curl_setopt($ch, CURLOPT_URL, $url);
+curl_setopt($ch, CURLOPT_POST, 1);
+curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($params));
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+
+// Execute cURL request
+$response = curl_exec($ch);
+
+// Check for errors
+if ($response === FALSE) {
+    die("cURL Error: " . curl_error($ch));
 }
 
-// Function to send email notification
-function send_notification($message) {
-    global $email;
-    mail($email, "Backup Completion Notification", $message);
-}
+// Close cURL connection
+curl_close($ch);
 
-// Main Execution
-$response = initiate_backup();
-send_notification($response);
+// Display the response or send an email notification
+echo $response;
+
+// Send notification email
+mail($notifyemail, "Backup Completion Notification", $response);
+
 ?>
-
