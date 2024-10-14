@@ -48,9 +48,6 @@ $ftp_path = '/backups';  // Path on the FTP server to store backups
 $backup_type = 'ftp'; // Choose between 'homedir' or 'ftp'
 ```
 
-```
-php backup.php
-```
 
 ## Automating Backups with Cron
 
