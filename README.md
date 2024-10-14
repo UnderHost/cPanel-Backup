@@ -11,14 +11,13 @@ This repository contains a PHP script to automate the process of creating a full
 
 ## Getting Started
 
-### Clone the Repository
+### Download the Repository
 
-To use this script, clone the repository to your server:
+To use this script, download the repository as a ZIP file:
 
-```
-git clone https://github.com/yourusername/cpanel-backup-script.git
-cd cpanel-backup-script
-```
+1. Visit the GitHub repository: https://github.com/UnderHost/cPanel-Backup
+2. Click on the **Code** button, then select **Download ZIP**.
+3. Extract the ZIP file on your computer or server.
 
 ### Setting Up cPanel API Token
 
