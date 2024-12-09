@@ -1,5 +1,5 @@
-```
-# Automated cPanel Backup Script (Updated for Jupiter Theme)
+
+# Automated cPanel Backup Script (Version 124+)
 
 This repository contains a PHP script to automate the process of creating a full cPanel backup and transferring it via FTP. You can choose to back up either to your home directory or directly to an FTP server.
 
@@ -121,5 +121,5 @@ For any issues or inquiries, feel free to open an issue on this repository or co
 ## License
 
 This project is open-source and available under the MIT License. See the `LICENSE` file for details.
-```
+
 
