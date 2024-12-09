@@ -1,23 +1,22 @@
 <?php
 // cPanel credentials and details
-$cpanel_host = 'your_cpanel_host.com';
-$cpanel_user = 'your_cpanel_username';
-$cpanel_token = 'your_api_token';
+$cpanel_host = 'your_cpanel_host.com'; // Replace with your cPanel domain or IP (use hostname if you use CloudFlare)
+$cpanel_user = 'your_cpanel_username'; // Replace with your cPanel username
+$cpanel_token = 'your_api_token';      // Replace with your API token
 
 // FTP credentials
-$ftp_host = 'ftp.example.com';
-$ftp_user = 'ftp_username';
-$ftp_pass = 'ftp_password';
-$ftp_path = '/backups';  // Path on the FTP server to store backups
+$ftp_host = 'ftp.example.com';         // Replace with your FTP host
+$ftp_user = 'ftp_username';           // Replace with your FTP username
+$ftp_pass = 'ftp_password';           // Replace with your FTP password
+$ftp_path = '/backups';               // Path on the FTP server to store backups
 
 // Backup settings
 $backup_type = 'ftp'; // Choose between 'homedir' or 'ftp'
 
 // cPanel API URL
-$cpanel_url = "https://$cpanel_host:2083/json-api/create_user_session?api.version=1&user=$cpanel_user";
+$backup_url = "https://$cpanel_host:2083/json-api/cpanel";
 
 // Set up the backup parameters
-$backup_url = "https://$cpanel_host:2083/json-api/cpanel";
 $post_data = [
     'cpanel_jsonapi_version' => '2',
     'cpanel_jsonapi_module' => 'Backup',
@@ -51,7 +50,7 @@ curl_setopt($curl, CURLOPT_POSTFIELDS, $post_data);
 // Execute the cURL request
 $response = curl_exec($curl);
 if (curl_errno($curl)) {
-    echo 'Error:' . curl_error($curl);
+    echo 'Error:' . curl_error($curl) . "\n";
 } else {
     $decoded_response = json_decode($response, true);
     if (isset($decoded_response['cpanelresult']['data'][0]['result']) && $decoded_response['cpanelresult']['data'][0]['result'] == 1) {
