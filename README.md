@@ -1,4 +1,4 @@
-# Automated cPanel Backup Script (Version 2.0)
+# Automated cPanel Backup Script (Version 0.2)
 
 [Backup Security Shield](https://underhost.com/images/backup-shield.png) *Ensure your website's safety with automated backups*
 
