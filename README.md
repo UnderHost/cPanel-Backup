@@ -1,125 +1,172 @@
+# Automated cPanel Backup Script (Version 2.0)
 
-# Automated cPanel Backup Script (Version 124+)
+![Backup Security Shield](https://underhost.com/images/backup-shield.png) *Ensure your website's safety with automated backups*
 
-This repository contains a PHP script to automate the process of creating a full cPanel backup and transferring it via FTP. You can choose to back up either to your home directory or directly to an FTP server.
+This PHP script automates full cPanel backups and transfers them to your preferred destination (FTP server or home directory). Designed for reliability and security, it's perfect for website owners and administrators.
 
-## Why Regular Backups Are Crucial
+## Table of Contents
+- [Why Backups Matter](#why-backups-matter)
+- [Features](#features)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Automation with Cron](#automation-with-cron)
+- [Troubleshooting](#troubleshooting)
+- [Security Considerations](#security-considerations)
+- [Support](#support)
+- [License](#license)
 
-Backing up your website regularly is essential to protect your data from unexpected events like server failures, cyberattacks, or accidental data loss. Learn more about the importance of backups in our blog post: [The Importance of Regular Backups for Your Website](https://underhost.com/blog/the-importance-of-regular-backups-for-your-website/).
+## Why Backups Matter
 
-If you’re looking for a comprehensive and reliable backup solution, check out our [business backup service](https://underhost.com/business-backup.php).
+Regular backups protect against:
+- Server failures 🖥️
+- Cyber attacks 🛡️
+- Human errors 👨💻
+- Malware infections 🦠
 
----
+**Recommended Reading:**  
+[The Importance of Regular Backups for Your Website](https://underhost.com/blog/the-importance-of-regular-backups-for-your-website/)
+
+**Need a managed solution?**  
+Explore our [Business Backup Service](https://underhost.com/business-backup.php)
+
+## Features
+
+✅ **Flexible Backup Destinations**  
+- FTP/SFTP servers  
+- Home directory  
+
+✅ **Enhanced Security**  
+- Encrypted API connections  
+- Configurable SSL verification  
+
+✅ **Automation Ready**  
+- Detailed logging  
+- Email notifications  
+- Cron job compatible  
+
+✅ **Smart Configuration**  
+- Log rotation  
+- Connection timeouts  
+- Passive FTP mode  
 
 ## Prerequisites
 
-- PHP installed on your server.
-- cURL enabled for PHP.
-- FTP server to store the backup files.
-- cPanel API token.
+- PHP 7.4+ with cURL extension
+- cPanel access with API permissions
+- FTP server credentials
+- Server with cron access
 
-## Getting Started
+## Installation
 
-### Download the Repository
+### Option 1: Using cPanel File Manager
+1. Log in to your cPanel account
+2. Navigate to **Files** → **File Manager**
+3. Create a new directory outside `public_html` (e.g., `backups`)
+4. Upload these files to the new directory:
+   - `backup.php`
+   - `config.php`
 
-To use this script, download the repository as a ZIP file and set it up securely:
+### Option 2: Using FTP Client
+1. Connect to your server via FTP
+2. Create a directory outside `public_html` (e.g., `/backups`)
+3. Upload the script files to this directory
 
-1. Visit the GitHub repository: [https://github.com/UnderHost/cPanel-Backup](https://github.com/UnderHost/cPanel-Backup).
-2. Click on the **Code** button and select **Download ZIP**.
-3. Extract the ZIP file on your computer or server.
-4. Place the script in a secure directory outside the `public_html` folder to ensure it is not publicly accessible.
+### Set Permissions via File Manager:
+1. Right-click on the backup directory
+2. Select **Change Permissions**
+3. Set to `750` (Owner: Read/Write/Execute, Group: Read/Execute)
+4. Set config.php permissions to `640`
 
-### Setting Up cPanel API Token
+## Configuration
 
-1. Log in to your cPanel account.
-2. Navigate to **Security** > **API Tokens**.
-3. Click on **Create** to generate a new token.
-4. Provide a name for the token and set the required permissions.
-   - Ensure you grant sufficient permissions for backup operations.
-5. Copy the generated token and replace the `$cpanel_token` value in the script.
+Edit `config.php` using cPanel File Manager:
 
-### Configuration
-
-Edit the `backup.php` script to include your cPanel and FTP details:
-
-```
-// cPanel credentials and details
-$cpanel_host = 'your_cpanel_host.com'; // Use the hostname if your domain is behind CloudFlare
-$cpanel_user = 'your_cpanel_username';
-$cpanel_token = 'your_api_token';
-
-// FTP credentials
-$ftp_host = 'ftp.example.com';
-$ftp_user = 'ftp_username';
-$ftp_pass = 'ftp_password';
-$ftp_path = '/backups';  // Path on the FTP server to store backups
-
-// Backup settings
-$backup_type = 'ftp'; // Choose between 'homedir' or 'ftp'
-```
-
----
-
-## Automating Backups with Cron
-
-To automate the backup process, you can set up a cron job to run the script at your desired interval.
-
-### Setting Up Scheduled Tasks (Cron Jobs) via cPanel
-
-1. Log in to your cPanel account.
-2. Navigate to **Advanced** > **Cron Jobs**.
-3. Under **Add New Cron Job**, set the desired frequency (e.g., to run every day at 2 AM, use `0 2 * * *`).
-4. In the **Command** field, enter the following:
+1. Right-click on `config.php`
+2. Select **Code Edit**
+3. Replace with your configuration:
 
 ```
-/usr/bin/php -q /path/to/backup.php >> /home/yourcpanelusername/backup.log 2>&1
+<?php
+return [
+    'cpanel' => [
+        'host' => 'yourdomain.com',
+        'user' => 'cpanel_username',
+        'token' => 'API_TOKEN_HERE',
+        'port' => 2083
+    ],
+    'ftp' => [
+        'host' => 'backup.server.com',
+        'user' => 'ftp_username',
+        'pass' => 'ftp_password',
+        'path' => '/backups/daily',
+        'passive' => true
+    ],
+    'backup' => [
+        'type' => 'ftp',
+        'notify_email' => 'you@email.com'
+    ]
+];
 ```
 
-Replace `/path/to/backup.php` with the full path to the script on your server, and `yourcpanelusername` with your cPanel username.
+## Automation with Cron
 
----
-
-## Script Overview
-
-The script uses cPanel's JSON API to create a backup. You can choose between backing up to your home directory (`homedir`) or to an FTP server (`ftp`).
-
-### Example Configuration
+### Set Up via cPanel:
+1. Navigate to **Advanced** → **Cron Jobs**
+2. Add new cron job with your preferred schedule
+3. Command to run:
 
 ```
-$cpanel_host = 'underhost.com';
-$cpanel_user = 'theuser';
-$cpanel_token = 'your_api_token';
-
-$ftp_host = 'ftp.underhost.com';
-$ftp_user = 'ftpBACKUP_username';
-$ftp_pass = 'ftpFTP_password';
-$ftp_path = '/backups/daily';
-
-$backup_type = 'ftp'; // Change to 'homedir' if needed
+/usr/local/bin/php /home/your_cpanel_user/backups/backup.php
 ```
 
----
+**Common Schedules:**
+- Daily: `0 2 * * *` (Runs at 2 AM daily)
+- Weekly: `0 2 * * 0` (Runs at 2 AM every Sunday)
 
 ## Troubleshooting
 
-- **Error: SSL Verification**: If you encounter SSL verification issues, ensure that your PHP installation has the correct SSL certificates. You can also disable SSL verification by modifying the cURL options in the script (not recommended for production).
-- **Backup Failure**: Ensure that the API token has the correct permissions and that the FTP credentials are accurate.
+### Common Issues
 
----
+**API Authentication Failed**  
+```
+Error: Invalid API credentials (Status: 0)
+```
+Solution:
+1. Verify token permissions
+2. Check token hasn't expired
+3. Ensure correct cPanel username
 
-## Additional Resources
+**FTP Connection Issues**  
+```
+Error: Could not connect to FTP server
+```
+Solution:
+1. Test FTP credentials manually
+2. Verify firewall settings
+3. Try passive mode: `'passive' => true`
 
-- **Why Backups Matter:** Read our blog post on [The Importance of Regular Backups for Your Website](https://underhost.com/blog/the-importance-of-regular-backups-for-your-website/).
-- **Looking for a Backup Service?** Check out our [business backup solution](https://underhost.com/business-backup.php) for automated, secure backups.
+## Security Considerations
 
----
+🔒 **Best Practices:**
+1. Store script outside web root
+2. Restrict file permissions:
+   - Scripts: `640`
+   - Directory: `750`
+3. Use strong FTP passwords
+4. Monitor backup logs regularly
 
 ## Support
 
-For any issues or inquiries, feel free to open an issue on this repository or contact us via [UnderHost](https://underhost.com).
+For assistance:  
+📝 [Open a GitHub Issue](https://github.com/UnderHost/cPanel-Backup/issues)  
+📧 [Contact UnderHost Support](https://underhost.com/contact)
 
 ## License
 
-This project is open-source and available under the MIT License. See the `LICENSE` file for details.
+MIT License - See [LICENSE](LICENSE) for full details.
 
+---
 
+*Maintained by [UnderHost](https://underhost.com) - Reliable Hosting Solutions*
+```
