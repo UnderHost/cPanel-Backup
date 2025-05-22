@@ -1,6 +1,6 @@
 # Automated cPanel Backup Script (Version 2.0)
 
-![Backup Security Shield](https://underhost.com/images/backup-shield.png) *Ensure your website's safety with automated backups*
+[Backup Security Shield](https://underhost.com/images/backup-shield.png) *Ensure your website's safety with automated backups*
 
 This PHP script automates full cPanel backups and transfers them to your preferred destination (FTP server or home directory). Designed for reliability and security, it's perfect for website owners and administrators.
 
