@@ -266,15 +266,15 @@ logs/
 ## Support
 
 - 📝 [Open a GitHub Issue](https://github.com/UnderHost/cPanel-Backup/issues)
-- 📧 [UnderHost Support](https://underhost.com/contact)
-- 🌐 [UnderHost — Managed Backup Solutions](https://underhost.com/business-backup.php)
+- 📧 [UnderHost Support](https://underhost.com/contact.php)
+- 🌐 [UnderHost - Managed Backup Solutions](https://underhost.com/managed-hosting.php)
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+MIT - see [LICENSE](LICENSE) for details.
 
 ---
 
-*Maintained by [UnderHost](https://underhost.com) — Reliable Hosting Solutions*
+*Maintained by [UnderHost](https://underhost.com) — Reliable Offshore Hosting Solutions*
