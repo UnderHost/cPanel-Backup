@@ -1,0 +1,50 @@
+<?php
+
+/**
+ * cPanel Backup — Example Configuration
+ *
+ * COPY THIS FILE to config.php and fill in your values.
+ * Do NOT commit config.php to version control.
+ *
+ * chmod 640 config.php
+ */
+
+return [
+
+    'cpanel' => [
+        'host'       => 'your-domain.com',           // cPanel hostname (no https://)
+        'user'       => 'cpanel_username',
+        'token'      => 'YOUR_CPANEL_API_TOKEN_HERE', // WHM → Manage API Tokens
+        'port'       => 2083,                         // 2083 = SSL (recommended)
+        'timeout'    => 300,
+        'ssl_verify' => true,                         // Set false only for self-signed certs
+    ],
+
+    'backup' => [
+        'type' => 'ftp',  // 'ftp' or 'homedir'
+    ],
+
+    'ftp' => [
+        'host'    => 'ftp.backup-server.com',
+        'user'    => 'ftp_username',
+        'pass'    => 'ftp_password',
+        'port'    => 21,
+        'path'    => '/backups',
+        'passive' => true,
+    ],
+
+    'notification' => [
+        'email'           => 'admin@your-domain.com',
+        'from'            => 'backup@your-domain.com',
+        'subject_success' => '[Backup] cPanel backup completed successfully',
+        'subject_failure' => '[Backup] ALERT — cPanel backup failed',
+    ],
+
+    'logging' => [
+        'enabled'  => true,
+        'file'     => __DIR__ . '/logs/backup.log',
+        'max_size' => 2097152, // 2 MB
+        'keep'     => 5,
+    ],
+
+];
