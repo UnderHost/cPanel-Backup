@@ -277,4 +277,4 @@ MIT - see [LICENSE](LICENSE) for details.
 
 ---
 
-*Maintained by [UnderHost](https://underhost.com) — Reliable Offshore Hosting Solutions*
+*Maintained by [UnderHost](https://underhost.com) - Reliable Offshore Hosting Solutions*
