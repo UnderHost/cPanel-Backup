@@ -2,7 +2,7 @@
 
 # UnderHost — cPanel Backup Script
 
-[![License: MIT](https://img.shields.io/badge/License-MIT--3.0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![ShellCheck](https://github.com/UnderHost/one-domain/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/UnderHost/one-domain/actions/workflows/shellcheck.yml)
 [![Version](https://img.shields.io/badge/version-2026.0.3-green.svg)](https://github.com/UnderHost/one-domain/blob/main/docs/CHANGELOG.md)
 [![UnderHost](https://img.shields.io/badge/by-UnderHost.com-orange)](https://underhost.com)
