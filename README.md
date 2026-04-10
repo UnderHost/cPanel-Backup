@@ -1,4 +1,12 @@
 # cPanel Backup Script (Beginner Friendly)
+# Automated cPanel Backup Script (Version 0.4)
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![ShellCheck](https://github.com/UnderHost/one-domain/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/UnderHost/one-domain/actions/workflows/shellcheck.yml)
+[![Version](https://img.shields.io/badge/version-2026.0.4-green.svg)](https://github.com/UnderHost/one-domain/blob/main/docs/CHANGELOG.md)
+[![UnderHost](https://img.shields.io/badge/by-UnderHost.com-orange)](https://underhost.com)
+
+This PHP script automates full cPanel backups and transfers them to your preferred destination (FTP server or home directory). Designed for reliability and security, it's perfect for website owners and administrators.
 
 Automated backups for **normal cPanel users** (no root access required).
 
@@ -194,6 +202,16 @@ Use absolute paths in cron and config.
 
 ---
 
+```
+/home/your_cpanel_user/
+├── backups/           ← store the script here, NOT inside public_html
+│   ├── backup.php
+│   ├── config.php     ← your private config (never commit this)
+│   ├── config.php.example
+│   └── logs/          ← created automatically on first run
+└── public_html/
+```
+
 ## Security tips
 
 - Keep script and config outside `public_html`
@@ -204,6 +222,24 @@ Use absolute paths in cron and config.
 
 ---
 
+## Why Backups Matter
+---
+
+**Recommended Reading:**  
+[The Importance of Regular Backups for Your Website](https://underhost.com/blog/the-importance-of-regular-backups-for-your-website/)
+
+**Need a managed solution?**  
+Explore our [Business Backup Service](https://underhost.com/business-backup.php)
+
 ## License
 
 MIT
+
+## Support
+
+For assistance:  
+- 📝 [Open a GitHub Issue](https://github.com/UnderHost/cPanel-Backup/issues)
+- 📧 [UnderHost Support](https://underhost.com/contact)
+- 🌐 [UnderHost — Managed Backup Solutions](https://underhost.com/business-backup.php)
+
+---
