@@ -202,16 +202,6 @@ Use absolute paths in cron and config.
 
 ---
 
-```
-/home/your_cpanel_user/
-├── backups/           ← store the script here, NOT inside public_html
-│   ├── backup.php
-│   ├── config.php     ← your private config (never commit this)
-│   ├── config.php.example
-│   └── logs/          ← created automatically on first run
-└── public_html/
-```
-
 ## Security tips
 
 - Keep script and config outside `public_html`
