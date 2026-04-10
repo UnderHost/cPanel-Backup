@@ -1,82 +1,141 @@
 <?php
 
 /**
- * cPanel Backup — Configuration File
+ * Beginner-friendly config for backup.php
  *
- * Copy this file to config.php and fill in your values.
- * NEVER commit config.php to version control — add it to .gitignore.
- *
- * Permissions: chmod 640 config.php
+ * 1) Copy this file to config.php
+ * 2) Fill only what you need
+ * 3) Keep config.php private (chmod 640)
  */
 
 return [
 
-    // ─── cPanel ──────────────────────────────────────────────────────────────
+    // auto  = try UAPI, fallback to native backup
+    // uapi  = force cPanel UAPI only
+    // native = force PHP-only backup (works when UAPI is blocked)
+    'engine' => 'auto',
+
     'cpanel' => [
-        // Your cPanel hostname or server IP (no trailing slash, no https://)
-        'host'    => 'your-domain.com',
-
-        // cPanel username
-        'user'    => 'cpanel_username',
-
-        // cPanel API Token (WHM → Manage API Tokens → Generate Token)
-        // Recommended scopes: Backup/fullbackup_to_ftp or Backup/fullbackup_to_homedir
-        'token'   => 'YOUR_CPANEL_API_TOKEN_HERE',
-
-        // cPanel HTTPS port (2083 = SSL, 2082 = non-SSL — SSL strongly recommended)
-        'port'    => 2083,
-
-        // Request timeout in seconds (large accounts may need 300+)
-        'timeout' => 300,
-
-        // Set to true only if cPanel uses a self-signed / untrusted certificate.
-        // Leave false in production — disabling SSL verification is a security risk.
+        'host'       => 'your-domain.com',
+        'user'       => 'cpanel_username',
+        'token'      => '', // leave empty if host blocks UAPI
+        'port'       => 2083,
+        'timeout'    => 300,
         'ssl_verify' => true,
     ],
 
-    // ─── Backup Destination ──────────────────────────────────────────────────
-    'backup' => [
-        // Destination type: 'ftp' or 'homedir'
-        //   ftp     – transfers the backup to a remote FTP server (see 'ftp' section)
-        //   homedir – stores the backup in your cPanel home directory
-        'type' => 'ftp',
+    // Used only in native mode (or when auto falls back to native)
+    'native' => [
+        // Usually /home/your_cpanel_user
+        'home_dir'      => '/home/your_cpanel_user',
+
+        // Folders/files to include (relative to home_dir or absolute path)
+        'include_paths' => [
+            'public_html',
+            // 'mail',
+        ],
+
+        // Skip heavy/unneeded folders
+        'exclude_paths' => [
+            'tmp',
+            '.trash',
+            'logs',
+        ],
+
+        // Optional database dumps
+        // Add one entry per DB if you want SQL backups
+        'databases' => [
+            // [
+            //     'name' => 'cpuser_wpdb',
+            //     'host' => 'localhost',
+            //     'port' => 3306,
+            //     'user' => 'cpuser_wpuser',
+            //     'pass' => 'strong-password',
+            // ],
+        ],
     ],
 
-    // ─── FTP (used when backup.type = 'ftp') ─────────────────────────────────
-    'ftp' => [
-        'host'    => 'ftp.backup-server.com',
-        'user'    => 'ftp_username',
-        'pass'    => 'ftp_password',
-        'port'    => 21,
-        'path'    => '/backups',      // Remote directory — must exist on FTP server
-        'passive' => true,            // Passive mode — recommended behind firewalls
+    'storage' => [
+        // Local backup files are created here first
+        'local_dir'   => __DIR__ . '/artifacts',
+        'temp_dir'    => __DIR__ . '/tmp',
+        'keep_local'  => 7,
     ],
 
-    // ─── Notifications ───────────────────────────────────────────────────────
+    // You can use one or many destinations.
+    // Supported types: local, ftp, sftp, rclone, google_drive, dropbox, s3
+    // google_drive/dropbox/s3 use rclone internally.
+    'destinations' => [
+        [
+            'name'    => 'Local archive',
+            'type'    => 'local',
+            'enabled' => true,
+        ],
+
+        // FTP destination
+        // [
+        //     'name'    => 'Remote FTP',
+        //     'type'    => 'ftp',
+        //     'enabled' => false,
+        //     'host'    => 'ftp.example.com',
+        //     'port'    => 21,
+        //     'user'    => 'ftp_user',
+        //     'pass'    => 'ftp_password',
+        //     'path'    => '/backups',
+        //     'passive' => true,
+        // ],
+
+        // SFTP destination (requires PHP ssh2 extension)
+        // [
+        //     'name'    => 'Remote SFTP',
+        //     'type'    => 'sftp',
+        //     'enabled' => false,
+        //     'host'    => 'sftp.example.com',
+        //     'port'    => 22,
+        //     'user'    => 'sftp_user',
+        //     'pass'    => 'sftp_password',
+        //     'path'    => '/backups',
+        // ],
+
+        // Google Drive via rclone remote named "gdrive"
+        // [
+        //     'name'    => 'Google Drive',
+        //     'type'    => 'google_drive',
+        //     'enabled' => false,
+        //     'remote'  => 'gdrive',
+        //     'path'    => 'cPanel-Backups',
+        // ],
+
+        // Dropbox via rclone remote named "dropbox"
+        // [
+        //     'name'    => 'Dropbox',
+        //     'type'    => 'dropbox',
+        //     'enabled' => false,
+        //     'remote'  => 'dropbox',
+        //     'path'    => 'cPanel-Backups',
+        // ],
+
+        // S3 via rclone remote named "s3"
+        // [
+        //     'name'    => 'Amazon S3',
+        //     'type'    => 's3',
+        //     'enabled' => false,
+        //     'remote'  => 's3',
+        //     'path'    => 'my-bucket/cpanel-backups',
+        // ],
+    ],
+
     'notification' => [
-        // Email address to receive success/failure reports
         'email'           => 'admin@your-domain.com',
-
-        // Sender address (must be a valid address on this server to pass SPF/DKIM)
         'from'            => 'backup@your-domain.com',
-
         'subject_success' => '[Backup] cPanel backup completed successfully',
         'subject_failure' => '[Backup] ALERT — cPanel backup failed',
     ],
 
-    // ─── Logging ─────────────────────────────────────────────────────────────
     'logging' => [
         'enabled'  => true,
-
-        // Absolute path is strongly recommended so cron jobs write to the right place.
-        // Example: '/home/cpanel_username/backup_logs/backup.log'
-        // Defaults to the directory this config lives in if left as a relative path.
         'file'     => __DIR__ . '/logs/backup.log',
-
-        // Maximum log file size in bytes before rotation (default 2 MB)
         'max_size' => 2097152,
-
-        // How many rotated log files to keep (e.g. backup.log.1, backup.log.2 …)
         'keep'     => 5,
     ],
 
