@@ -1,404 +1,715 @@
 <?php
- 
+
 declare(strict_types=1);
- 
+
 /**
  * UnderHost — cPanel Backup Script
  *
- * Initiates a full cPanel backup via the UAPI and transfers it to a
- * remote FTP server or stores it in the cPanel home directory.
+ * Beginner-friendly backup runner for shared hosting.
+ * Supports:
+ * - cPanel UAPI backup trigger (when available)
+ * - Native PHP backup fallback (files + MySQL dump) when UAPI is unavailable
+ * - Upload destinations: local, FTP, SFTP, and rclone remotes (Google Drive/S3/Dropbox/etc.)
  *
- * Usage:  php backup.php [--config=/path/to/config.php] [--dry-run]
- * Cron:   0 2 * * *  /usr/local/bin/php /home/user/backups/backup.php
- *
- * @version 1.0.0
- * @link    https://github.com/UnderHost/cPanel-Backup
- * @license MIT
+ * Usage:
+ *   php backup.php [--config=/path/config.php] [--dry-run]
  */
- 
-// ─── Bootstrap ───────────────────────────────────────────────────────────────
- 
-// Ensure we are running from CLI only
+
 if (PHP_SAPI !== 'cli') {
     http_response_code(403);
     exit('This script must be run from the command line.' . PHP_EOL);
 }
- 
-// Minimum requirements check
-if (!extension_loaded('curl')) {
-    fwrite(STDERR, '[FATAL] The PHP cURL extension is required but not loaded.' . PHP_EOL);
-    exit(1);
-}
- 
+
 if (PHP_VERSION_ID < 70400) {
-    fwrite(STDERR, '[FATAL] PHP 7.4 or higher is required (current: ' . PHP_VERSION . ').' . PHP_EOL);
+    fwrite(STDERR, '[FATAL] PHP 7.4 or higher is required.' . PHP_EOL);
     exit(1);
 }
- 
-// ─── Parse CLI arguments ──────────────────────────────────────────────────────
- 
-$options    = getopt('', ['config:', 'dry-run']);
+
+$options = getopt('', ['config:', 'dry-run']);
 $configPath = $options['config'] ?? __DIR__ . '/config.php';
-$dryRun     = isset($options['dry-run']);
- 
-// ─── Load configuration ───────────────────────────────────────────────────────
- 
+$dryRun = isset($options['dry-run']);
+
 if (!file_exists($configPath)) {
     fwrite(STDERR, "[FATAL] Config file not found: {$configPath}" . PHP_EOL);
-    fwrite(STDERR, "Copy config.php.example to config.php and fill in your credentials." . PHP_EOL);
     exit(1);
 }
- 
+
 $config = require $configPath;
- 
 if (!is_array($config)) {
     fwrite(STDERR, "[FATAL] Config file must return an array." . PHP_EOL);
     exit(1);
 }
- 
-// ─── Ensure logs directory exists ────────────────────────────────────────────
- 
-$logFile = $config['logging']['file'] ?? (__DIR__ . '/logs/backup.log');
-$logDir  = dirname($logFile);
- 
+
+$defaults = [
+    'engine' => 'auto', // auto|uapi|native
+    'cpanel' => [
+        'host' => '',
+        'user' => '',
+        'token' => '',
+        'port' => 2083,
+        'timeout' => 300,
+        'ssl_verify' => true,
+    ],
+    'native' => [
+        'home_dir' => getenv('HOME') ?: dirname(__DIR__),
+        'include_paths' => ['public_html'],
+        'exclude_paths' => ['tmp', '.trash', 'logs'],
+        'databases' => [],
+    ],
+    'storage' => [
+        'local_dir' => __DIR__ . '/artifacts',
+        'temp_dir' => __DIR__ . '/tmp',
+        'keep_local' => 7,
+    ],
+    'destinations' => [
+        ['type' => 'local', 'enabled' => true],
+    ],
+    'notification' => [
+        'email' => '',
+        'from' => '',
+        'subject_success' => '[Backup] Success',
+        'subject_failure' => '[Backup] FAILED',
+    ],
+    'logging' => [
+        'enabled' => true,
+        'file' => __DIR__ . '/logs/backup.log',
+        'max_size' => 2097152,
+        'keep' => 5,
+    ],
+];
+
+$config = array_replace_recursive($defaults, $config);
+
+$logFile = $config['logging']['file'];
+$logDir = dirname($logFile);
 if (!is_dir($logDir) && !mkdir($logDir, 0750, true) && !is_dir($logDir)) {
     fwrite(STDERR, "[FATAL] Cannot create log directory: {$logDir}" . PHP_EOL);
     exit(1);
 }
- 
-// ─── Functions ────────────────────────────────────────────────────────────────
- 
-/**
- * Write a timestamped message to STDOUT and optionally to a log file.
- */
+
 function log_message(string $message, bool $isError = false): void
 {
     global $config;
- 
-    $level     = $isError ? 'ERROR' : 'INFO';
-    $timestamp = date('Y-m-d H:i:s');
-    $line      = "[{$timestamp}] [{$level}] {$message}" . PHP_EOL;
- 
-    // Write to appropriate stream
+
+    $level = $isError ? 'ERROR' : 'INFO';
+    $line = '[' . date('Y-m-d H:i:s') . "] [{$level}] {$message}" . PHP_EOL;
+
     $isError ? fwrite(STDERR, $line) : fwrite(STDOUT, $line);
- 
+
     if (!($config['logging']['enabled'] ?? true)) {
         return;
     }
- 
-    $logFile = $config['logging']['file'] ?? (__DIR__ . '/logs/backup.log');
-    $maxSize = (int)($config['logging']['max_size'] ?? 2097152);
-    $keep    = max(1, (int)($config['logging']['keep'] ?? 5));
- 
-    // Rotate if file exceeds max size
+
+    $logFile = $config['logging']['file'];
+    $maxSize = (int)$config['logging']['max_size'];
+    $keep = max(1, (int)$config['logging']['keep']);
+
     if (file_exists($logFile) && filesize($logFile) >= $maxSize) {
         rotate_logs($logFile, $keep);
     }
- 
+
     file_put_contents($logFile, $line, FILE_APPEND | LOCK_EX);
 }
- 
-/**
- * Rotate log files, keeping the last $keep copies.
- * e.g. backup.log.4 → backup.log.5, …, backup.log → backup.log.1
- */
+
 function rotate_logs(string $logFile, int $keep): void
 {
-    // Remove oldest
     $oldest = "{$logFile}.{$keep}";
     if (file_exists($oldest)) {
-        unlink($oldest);
+        @unlink($oldest);
     }
- 
-    // Shift existing rotated files
+
     for ($i = $keep - 1; $i >= 1; $i--) {
         $src = "{$logFile}.{$i}";
         $dst = "{$logFile}." . ($i + 1);
         if (file_exists($src)) {
-            rename($src, $dst);
+            @rename($src, $dst);
         }
     }
- 
-    // Rotate current log
+
     if (file_exists($logFile)) {
-        rename($logFile, "{$logFile}.1");
+        @rename($logFile, "{$logFile}.1");
     }
 }
- 
-/**
- * Send an email notification.
- * Returns true on success, false on failure.
- */
-function send_notification(string $subject, string $body): bool
+
+function send_notification(string $subject, string $body): void
 {
     global $config;
- 
-    $to   = $config['notification']['email'] ?? '';
-    $from = $config['notification']['from']  ?? "backup-noreply@{$config['cpanel']['host']}";
- 
-    if (!filter_var($to, FILTER_VALIDATE_EMAIL)) {
-        log_message("Skipping notification — invalid email address: {$to}", true);
-        return false;
+
+    $to = trim((string)($config['notification']['email'] ?? ''));
+    if ($to === '' || !filter_var($to, FILTER_VALIDATE_EMAIL)) {
+        return;
     }
- 
+
+    $from = trim((string)($config['notification']['from'] ?? ''));
     if (!filter_var($from, FILTER_VALIDATE_EMAIL)) {
-        $from = "backup-noreply@localhost";
+        $from = 'backup-noreply@localhost';
     }
- 
-    $headers  = "From: {$from}\r\n";
+
+    $headers = "From: {$from}\r\n";
     $headers .= "Reply-To: {$from}\r\n";
     $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
-    $headers .= "X-Mailer: UnderHost-Backup-Script/1.0\r\n";
- 
-    $result = mail($to, $subject, $body, $headers);
- 
-    if (!$result) {
-        log_message("Failed to send notification email to {$to}", true);
-    }
- 
-    return $result;
+
+    @mail($to, $subject, $body, $headers);
 }
- 
-/**
- * Validate that all required configuration keys are present and non-empty.
- * Returns an array of error strings (empty = config is valid).
- */
+
 function validate_config(array $config): array
 {
     $errors = [];
- 
-    $required = [
-        'cpanel.host'  => 'cPanel host',
-        'cpanel.user'  => 'cPanel username',
-        'cpanel.token' => 'cPanel API token',
-    ];
- 
-    foreach ($required as $path => $label) {
-        [$section, $key] = explode('.', $path);
-        if (empty($config[$section][$key])) {
-            $errors[] = "Missing required config: {$label} ({$path})";
-        }
+
+    if (!in_array($config['engine'], ['auto', 'uapi', 'native'], true)) {
+        $errors[] = "engine must be auto, uapi, or native";
     }
- 
-    $backupType = $config['backup']['type'] ?? 'ftp';
- 
-    if (!in_array($backupType, ['ftp', 'homedir'], true)) {
-        $errors[] = "Invalid backup type '{$backupType}'. Must be 'ftp' or 'homedir'.";
+
+    if (empty($config['destinations']) || !is_array($config['destinations'])) {
+        $errors[] = 'destinations must be a non-empty array';
     }
- 
-    if ($backupType === 'ftp') {
-        foreach (['host', 'user', 'pass'] as $key) {
-            if (empty($config['ftp'][$key])) {
-                $errors[] = "Missing required FTP config: ftp.{$key}";
-            }
-        }
-    }
- 
-    $email = $config['notification']['email'] ?? '';
-    if (!empty($email) && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $errors[] = "Invalid notification email: {$email}";
-    }
- 
+
     return $errors;
 }
- 
-/**
- * Execute the cPanel UAPI backup request.
- *
- * @throws RuntimeException on cURL or API error
- */
-function trigger_backup(array $config, bool $dryRun = false): array
+
+function can_use_uapi(array $config): bool
 {
-    $cpanel     = $config['cpanel'];
-    $backupType = $config['backup']['type'] ?? 'ftp';
-    $sslVerify  = (bool)($cpanel['ssl_verify'] ?? true);
- 
-    // Build the UAPI endpoint
-    if ($backupType === 'ftp') {
-        $endpoint = 'Backup/fullbackup_to_ftp';
-        $postData = [
-            'host'     => $config['ftp']['host'],
-            'username' => $config['ftp']['user'],
-            'password' => $config['ftp']['pass'],
-            'port'     => (int)($config['ftp']['port'] ?? 21),
-            'rdir'     => $config['ftp']['path'] ?? '/',
-            'passive'  => ($config['ftp']['passive'] ?? true) ? 1 : 0,
-            'email'    => $config['notification']['email'] ?? '',
-        ];
-    } else {
-        // homedir backup — no FTP params needed
-        $endpoint = 'Backup/fullbackup_to_homedir';
-        $postData = [
-            'email' => $config['notification']['email'] ?? '',
-        ];
-    }
- 
-    $url = "https://{$cpanel['host']}:{$cpanel['port']}/execute/{$endpoint}";
- 
+    return !empty($config['cpanel']['host'])
+        && !empty($config['cpanel']['user'])
+        && !empty($config['cpanel']['token'])
+        && extension_loaded('curl');
+}
+
+function trigger_uapi_homedir_backup(array $config, bool $dryRun): array
+{
+    $cpanel = $config['cpanel'];
+    $url = "https://{$cpanel['host']}:{$cpanel['port']}/execute/Backup/fullbackup_to_homedir";
+
     if ($dryRun) {
-        log_message("[DRY-RUN] Would POST to: {$url}");
-        log_message("[DRY-RUN] Payload: " . json_encode($postData, JSON_UNESCAPED_SLASHES));
-        return ['status' => 1, 'data' => [], 'errors' => [], 'dry_run' => true];
+        log_message("[DRY-RUN] UAPI request: {$url}");
+        return ['status' => 'ok', 'mode' => 'uapi', 'message' => 'Dry run'];
     }
- 
-    $curl = curl_init();
- 
-    curl_setopt_array($curl, [
-        CURLOPT_URL            => $url,
-        CURLOPT_HTTPHEADER     => [
-            "Authorization: cpanel {$cpanel['user']}:{$cpanel['token']}",
-        ],
-        CURLOPT_POST           => true,
-        CURLOPT_POSTFIELDS     => http_build_query($postData),
+
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $url,
+        CURLOPT_HTTPHEADER => ["Authorization: cpanel {$cpanel['user']}:{$cpanel['token']}"] ,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => http_build_query(['email' => $config['notification']['email'] ?? '']),
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_SSL_VERIFYPEER => $sslVerify,
-        CURLOPT_SSL_VERIFYHOST => $sslVerify ? 2 : 0,
-        CURLOPT_TIMEOUT        => (int)($cpanel['timeout'] ?? 300),
+        CURLOPT_SSL_VERIFYPEER => (bool)$cpanel['ssl_verify'],
+        CURLOPT_SSL_VERIFYHOST => (bool)$cpanel['ssl_verify'] ? 2 : 0,
+        CURLOPT_TIMEOUT => (int)$cpanel['timeout'],
         CURLOPT_CONNECTTIMEOUT => 30,
-        CURLOPT_FAILONERROR    => false, // We handle HTTP errors manually
     ]);
- 
-    $response   = curl_exec($curl);
-    $curlErrNo  = curl_errno($curl);
-    $curlErrMsg = curl_error($curl);
-    $httpCode   = curl_getinfo($curl, CURLINFO_HTTP_CODE);
- 
-    curl_close($curl);
- 
-    if ($curlErrNo !== 0) {
-        throw new RuntimeException("cURL error #{$curlErrNo}: {$curlErrMsg}");
+
+    $response = curl_exec($ch);
+    $errNo = curl_errno($ch);
+    $err = curl_error($ch);
+    $http = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($errNo !== 0) {
+        throw new RuntimeException("UAPI cURL error {$errNo}: {$err}");
     }
- 
-    if ($response === false || $response === '') {
-        throw new RuntimeException("Empty response from cPanel API (HTTP {$httpCode})");
+
+    $decoded = json_decode((string)$response, true);
+    if ($http !== 200 || !is_array($decoded)) {
+        throw new RuntimeException("UAPI failed with HTTP {$http}");
     }
- 
-    $decoded = json_decode($response, true);
- 
-    if (json_last_error() !== JSON_ERROR_NONE) {
-        throw new RuntimeException(
-            "Failed to parse cPanel API response (HTTP {$httpCode}). " .
-            "Raw: " . substr($response, 0, 300)
-        );
+
+    if (!empty($decoded['errors'])) {
+        throw new RuntimeException('UAPI errors: ' . implode('; ', $decoded['errors']));
     }
- 
-    if ($httpCode !== 200) {
-        $apiErrors = implode('; ', $decoded['errors'] ?? []);
-        throw new RuntimeException("cPanel API returned HTTP {$httpCode}. Errors: {$apiErrors}");
-    }
- 
-    return $decoded;
+
+    return ['status' => 'ok', 'mode' => 'uapi', 'message' => 'Backup request accepted'];
 }
- 
-// ─── Main ─────────────────────────────────────────────────────────────────────
- 
-$startTime = microtime(true);
-$exitCode  = 0;
- 
-log_message("════════════════════════════════════════");
-log_message("UnderHost cPanel Backup — starting");
-if ($dryRun) {
-    log_message("DRY-RUN mode — no changes will be made");
+
+function resolve_path(string $homeDir, string $path): string
+{
+    if ($path === '') {
+        return $homeDir;
+    }
+
+    if ($path[0] === '/') {
+        return $path;
+    }
+
+    return rtrim($homeDir, '/') . '/' . ltrim($path, '/');
 }
- 
-try {
-    // 1. Validate configuration
-    $errors = validate_config($config);
-    if (!empty($errors)) {
-        throw new InvalidArgumentException(
-            "Configuration errors:\n  • " . implode("\n  • ", $errors)
+
+function copy_recursive(string $src, string $dst, array $exclude): void
+{
+    if (!file_exists($src)) {
+        return;
+    }
+
+    if (is_dir($src)) {
+        if (!is_dir($dst)) {
+            mkdir($dst, 0750, true);
+        }
+
+        $items = scandir($src);
+        if ($items === false) {
+            return;
+        }
+
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+
+            $srcPath = $src . '/' . $item;
+            foreach ($exclude as $ex) {
+                $ex = trim((string)$ex, '/');
+                if ($ex !== '' && strpos(trim($srcPath, '/'), $ex) !== false) {
+                    continue 2;
+                }
+            }
+
+            copy_recursive($srcPath, $dst . '/' . $item, $exclude);
+        }
+
+        return;
+    }
+
+    @copy($src, $dst);
+}
+
+function dump_mysql_database(array $db, string $outputFile): void
+{
+    $mysqli = @new mysqli(
+        $db['host'] ?? 'localhost',
+        $db['user'] ?? '',
+        $db['pass'] ?? '',
+        $db['name'] ?? '',
+        (int)($db['port'] ?? 3306)
+    );
+
+    if ($mysqli->connect_errno) {
+        throw new RuntimeException('MySQL connection failed for ' . ($db['name'] ?? 'unknown') . ': ' . $mysqli->connect_error);
+    }
+
+    $mysqli->set_charset('utf8mb4');
+
+    $fp = fopen($outputFile, 'wb');
+    if ($fp === false) {
+        throw new RuntimeException('Cannot write SQL dump: ' . $outputFile);
+    }
+
+    fwrite($fp, "-- SQL dump generated by backup.php\n");
+    fwrite($fp, 'SET FOREIGN_KEY_CHECKS=0;' . "\n\n");
+
+    $tablesRes = $mysqli->query('SHOW TABLES');
+    if ($tablesRes instanceof mysqli_result) {
+        while ($row = $tablesRes->fetch_array()) {
+            $table = $row[0];
+            fwrite($fp, "DROP TABLE IF EXISTS `{$table}`;\n");
+
+            $createRes = $mysqli->query("SHOW CREATE TABLE `{$table}`");
+            if ($createRes instanceof mysqli_result) {
+                $createRow = $createRes->fetch_assoc();
+                $createSql = $createRow['Create Table'] ?? '';
+                fwrite($fp, $createSql . ";\n\n");
+                $createRes->free();
+            }
+
+            $dataRes = $mysqli->query("SELECT * FROM `{$table}`");
+            if ($dataRes instanceof mysqli_result) {
+                while ($data = $dataRes->fetch_assoc()) {
+                    $cols = array_map(static fn($col) => "`{$col}`", array_keys($data));
+                    $vals = array_map(
+                        static function ($v) use ($mysqli): string {
+                            if ($v === null) {
+                                return 'NULL';
+                            }
+                            return "'" . $mysqli->real_escape_string((string)$v) . "'";
+                        },
+                        array_values($data)
+                    );
+
+                    fwrite($fp, 'INSERT INTO `' . $table . '` (' . implode(',', $cols) . ') VALUES (' . implode(',', $vals) . ");\n");
+                }
+                fwrite($fp, "\n");
+                $dataRes->free();
+            }
+        }
+        $tablesRes->free();
+    }
+
+    fwrite($fp, 'SET FOREIGN_KEY_CHECKS=1;' . "\n");
+    fclose($fp);
+    $mysqli->close();
+}
+
+function create_archive_from_directory(string $sourceDir, string $targetBase): string
+{
+    if (class_exists('ZipArchive')) {
+        $zipPath = $targetBase . '.zip';
+        $zip = new ZipArchive();
+        if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+            throw new RuntimeException('Unable to create zip archive');
+        }
+
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($sourceDir, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::SELF_FIRST
         );
+
+        foreach ($iterator as $file) {
+            $filePath = $file->getPathname();
+            $relPath = substr($filePath, strlen($sourceDir) + 1);
+            if ($file->isDir()) {
+                $zip->addEmptyDir($relPath);
+            } else {
+                $zip->addFile($filePath, $relPath);
+            }
+        }
+
+        $zip->close();
+        return $zipPath;
     }
- 
-    $backupType = $config['backup']['type'] ?? 'ftp';
-    $destination = $backupType === 'ftp'
-        ? "FTP ({$config['ftp']['host']}:{$config['ftp']['port']})"
-        : 'cPanel home directory';
- 
-    log_message("Backup type    : {$backupType}");
-    log_message("Destination    : {$destination}");
-    log_message("cPanel host    : {$config['cpanel']['host']}:{$config['cpanel']['port']}");
-    log_message("cPanel user    : {$config['cpanel']['user']}");
-    log_message("SSL verify     : " . ($config['cpanel']['ssl_verify'] ?? true ? 'enabled' : 'DISABLED (insecure)'));
- 
-    if (!($config['cpanel']['ssl_verify'] ?? true)) {
-        log_message("WARNING: SSL verification is disabled. This is insecure in production.", true);
+
+    $tarPath = $targetBase . '.tar';
+    $gzPath = $targetBase . '.tar.gz';
+
+    if (file_exists($tarPath)) {
+        @unlink($tarPath);
     }
- 
-    // 2. Trigger backup
-    log_message("Sending backup request to cPanel UAPI…");
-    $response = trigger_backup($config, $dryRun);
- 
-    // 3. Check API response
-    if (!empty($response['errors'])) {
-        $apiErrors = implode("\n  • ", $response['errors']);
-        throw new RuntimeException("cPanel API reported errors:\n  • {$apiErrors}");
+    if (file_exists($gzPath)) {
+        @unlink($gzPath);
     }
- 
-    $elapsed = round(microtime(true) - $startTime, 2);
- 
+
+    $phar = new PharData($tarPath);
+    $phar->buildFromDirectory($sourceDir);
+    $phar->compress(Phar::GZ);
+    unset($phar);
+
+    @unlink($tarPath);
+
+    return $gzPath;
+}
+
+function rrmdir(string $dir): void
+{
+    if (!is_dir($dir)) {
+        return;
+    }
+
+    $items = scandir($dir);
+    if ($items === false) {
+        return;
+    }
+
+    foreach ($items as $item) {
+        if ($item === '.' || $item === '..') {
+            continue;
+        }
+
+        $path = $dir . '/' . $item;
+        if (is_dir($path)) {
+            rrmdir($path);
+        } else {
+            @unlink($path);
+        }
+    }
+
+    @rmdir($dir);
+}
+
+function create_native_backup(array $config, bool $dryRun): array
+{
+    $homeDir = rtrim((string)$config['native']['home_dir'], '/');
+    $localDir = rtrim((string)$config['storage']['local_dir'], '/');
+    $tempDir = rtrim((string)$config['storage']['temp_dir'], '/');
+
+    $stamp = date('Ymd_His');
+    $baseName = ($config['cpanel']['user'] ?: 'cpanel') . '_backup_' . $stamp;
+
+    $workspace = $tempDir . '/' . $baseName;
+    $contentDir = $workspace . '/content';
+    $filesDir = $contentDir . '/files';
+    $dbDir = $contentDir . '/databases';
+
     if ($dryRun) {
-        log_message("DRY-RUN complete — no backup was actually triggered.");
-    } else {
-        log_message("Backup request accepted by cPanel (cPanel will transfer in the background).");
+        log_message('[DRY-RUN] Native mode would create archive from configured files/databases.');
+        return ['status' => 'ok', 'mode' => 'native', 'dry_run' => true];
     }
- 
-    log_message("Completed in {$elapsed}s");
-    log_message("════════════════════════════════════════");
- 
-    // 4. Success notification
-    $subject = $config['notification']['subject_success']
-        ?? '[Backup] cPanel backup completed successfully';
- 
-    $body = implode(PHP_EOL, [
-        'cPanel Backup — Success',
-        str_repeat('─', 40),
-        '',
-        "Host        : {$config['cpanel']['host']}",
-        "User        : {$config['cpanel']['user']}",
-        "Type        : {$backupType}",
-        "Destination : {$destination}",
-        "Time        : " . date('Y-m-d H:i:s'),
-        "Duration    : {$elapsed}s",
-        '',
-        'cPanel will send a separate notification when the backup transfer completes.',
-        '',
-        '─────────────────────────────────────────',
-        'UnderHost Backup Script — https://underhost.com',
-    ]);
- 
+
+    foreach ([$localDir, $tempDir, $filesDir, $dbDir] as $dir) {
+        if (!is_dir($dir) && !mkdir($dir, 0750, true) && !is_dir($dir)) {
+            throw new RuntimeException('Cannot create directory: ' . $dir);
+        }
+    }
+
+    $exclude = (array)($config['native']['exclude_paths'] ?? []);
+
+    foreach ((array)$config['native']['include_paths'] as $path) {
+        $resolved = resolve_path($homeDir, (string)$path);
+        $label = trim(str_replace('/', '_', (string)$path), '_');
+        $label = $label !== '' ? $label : 'root';
+        $target = $filesDir . '/' . $label;
+        log_message('Copying files: ' . $resolved);
+        copy_recursive($resolved, $target, $exclude);
+    }
+
+    foreach ((array)$config['native']['databases'] as $db) {
+        if (empty($db['name'])) {
+            continue;
+        }
+
+        $out = $dbDir . '/' . $db['name'] . '.sql';
+        log_message('Dumping database: ' . $db['name']);
+        dump_mysql_database($db, $out);
+    }
+
+    $manifest = [
+        'created_at' => date('c'),
+        'engine' => 'native',
+        'host' => $config['cpanel']['host'] ?? '',
+        'user' => $config['cpanel']['user'] ?? '',
+        'include_paths' => $config['native']['include_paths'],
+        'database_count' => count((array)$config['native']['databases']),
+    ];
+    file_put_contents($contentDir . '/manifest.json', json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+    $archiveBase = $localDir . '/' . $baseName;
+    $archivePath = create_archive_from_directory($contentDir, $archiveBase);
+
+    rrmdir($workspace);
+
+    return [
+        'status' => 'ok',
+        'mode' => 'native',
+        'archive_path' => $archivePath,
+        'archive_size' => file_exists($archivePath) ? filesize($archivePath) : 0,
+    ];
+}
+
+function upload_via_ftp(string $filePath, array $destination, bool $dryRun): array
+{
+    if (!function_exists('ftp_connect')) {
+        throw new RuntimeException('FTP extension not available in PHP.');
+    }
+
+    $host = (string)($destination['host'] ?? '');
+    $user = (string)($destination['user'] ?? '');
+    $pass = (string)($destination['pass'] ?? '');
+    $port = (int)($destination['port'] ?? 21);
+    $remotePath = rtrim((string)($destination['path'] ?? '/'), '/');
+
+    if ($dryRun) {
+        return ['ok' => true, 'message' => "[DRY-RUN] FTP upload to {$host}{$remotePath}"];
+    }
+
+    $conn = @ftp_connect($host, $port, 30);
+    if (!$conn) {
+        throw new RuntimeException('Could not connect to FTP host: ' . $host);
+    }
+
+    if (!@ftp_login($conn, $user, $pass)) {
+        ftp_close($conn);
+        throw new RuntimeException('FTP login failed for user: ' . $user);
+    }
+
+    @ftp_pasv($conn, (bool)($destination['passive'] ?? true));
+
+    $remoteFile = $remotePath . '/' . basename($filePath);
+    if (!@ftp_put($conn, $remoteFile, $filePath, FTP_BINARY)) {
+        ftp_close($conn);
+        throw new RuntimeException('FTP upload failed: ' . $remoteFile);
+    }
+
+    ftp_close($conn);
+
+    return ['ok' => true, 'message' => 'Uploaded via FTP: ' . $remoteFile];
+}
+
+function upload_via_sftp(string $filePath, array $destination, bool $dryRun): array
+{
+    if (!function_exists('ssh2_connect')) {
+        throw new RuntimeException('ssh2 extension not available for SFTP.');
+    }
+
+    $host = (string)($destination['host'] ?? '');
+    $port = (int)($destination['port'] ?? 22);
+    $user = (string)($destination['user'] ?? '');
+    $pass = (string)($destination['pass'] ?? '');
+    $remotePath = rtrim((string)($destination['path'] ?? '/'), '/');
+
+    if ($dryRun) {
+        return ['ok' => true, 'message' => "[DRY-RUN] SFTP upload to {$host}{$remotePath}"];
+    }
+
+    $connection = @ssh2_connect($host, $port);
+    if (!$connection) {
+        throw new RuntimeException('Cannot connect to SFTP server: ' . $host);
+    }
+
+    if (!@ssh2_auth_password($connection, $user, $pass)) {
+        throw new RuntimeException('SFTP auth failed for user: ' . $user);
+    }
+
+    $sftp = @ssh2_sftp($connection);
+    if (!$sftp) {
+        throw new RuntimeException('Cannot initialize SFTP subsystem.');
+    }
+
+    $remoteFile = $remotePath . '/' . basename($filePath);
+    $stream = @fopen('ssh2.sftp://' . intval($sftp) . $remoteFile, 'w');
+    if ($stream === false) {
+        throw new RuntimeException('Cannot open remote SFTP file: ' . $remoteFile);
+    }
+
+    $data = file_get_contents($filePath);
+    if ($data === false) {
+        fclose($stream);
+        throw new RuntimeException('Cannot read local file for SFTP upload.');
+    }
+
+    fwrite($stream, $data);
+    fclose($stream);
+
+    return ['ok' => true, 'message' => 'Uploaded via SFTP: ' . $remoteFile];
+}
+
+function upload_via_rclone(string $filePath, array $destination, bool $dryRun): array
+{
+    $remote = (string)($destination['remote'] ?? '');
+    $path = trim((string)($destination['path'] ?? ''), '/');
+
+    if ($remote === '') {
+        throw new RuntimeException('rclone destination requires remote.');
+    }
+
+    $target = rtrim($remote, ':') . ':' . ($path !== '' ? '/' . $path : '');
+    $cmd = 'rclone copy ' . escapeshellarg($filePath) . ' ' . escapeshellarg($target) . ' --stats=0 --checkers=4 --transfers=1';
+
+    if ($dryRun) {
+        return ['ok' => true, 'message' => '[DRY-RUN] ' . $cmd];
+    }
+
+    exec($cmd . ' 2>&1', $out, $code);
+    if ($code !== 0) {
+        throw new RuntimeException("rclone failed ({$code}): " . implode("\n", $out));
+    }
+
+    return ['ok' => true, 'message' => 'Uploaded via rclone to ' . $target];
+}
+
+function apply_retention(string $dir, int $keep): void
+{
+    $files = glob(rtrim($dir, '/') . '/*.{zip,gz,tar}', GLOB_BRACE);
+    if (!is_array($files)) {
+        return;
+    }
+
+    usort(
+        $files,
+        static fn($a, $b) => filemtime($b) <=> filemtime($a)
+    );
+
+    if (count($files) <= $keep) {
+        return;
+    }
+
+    foreach (array_slice($files, $keep) as $old) {
+        @unlink($old);
+    }
+}
+
+$start = microtime(true);
+$exitCode = 0;
+$summary = [];
+
+log_message('════════════════════════════════════════');
+log_message('UnderHost cPanel Backup — starting');
+log_message('Engine mode: ' . $config['engine']);
+if ($dryRun) {
+    log_message('DRY-RUN mode enabled.');
+}
+
+try {
+    $errors = validate_config($config);
+    if ($errors !== []) {
+        throw new InvalidArgumentException("Configuration errors:\n - " . implode("\n - ", $errors));
+    }
+
+    $result = null;
+    $engineUsed = $config['engine'];
+
+    if ($config['engine'] === 'uapi' || ($config['engine'] === 'auto' && can_use_uapi($config))) {
+        try {
+            $result = trigger_uapi_homedir_backup($config, $dryRun);
+            $engineUsed = 'uapi';
+            $summary[] = 'UAPI backup trigger accepted by cPanel.';
+        } catch (Throwable $uapiError) {
+            if ($config['engine'] === 'uapi') {
+                throw $uapiError;
+            }
+            log_message('UAPI unavailable. Falling back to native mode: ' . $uapiError->getMessage(), true);
+            $result = create_native_backup($config, $dryRun);
+            $engineUsed = 'native';
+        }
+    } else {
+        $result = create_native_backup($config, $dryRun);
+        $engineUsed = 'native';
+    }
+
+    $archivePath = $result['archive_path'] ?? null;
+
+    if ($archivePath !== null) {
+        log_message('Created archive: ' . $archivePath);
+        $summary[] = 'Archive: ' . basename($archivePath) . ' (' . round(((int)($result['archive_size'] ?? 0)) / 1024 / 1024, 2) . ' MB)';
+
+        foreach ((array)$config['destinations'] as $idx => $destination) {
+            if (($destination['enabled'] ?? true) === false) {
+                continue;
+            }
+
+            $type = strtolower((string)($destination['type'] ?? 'local'));
+            $label = $destination['name'] ?? "destination#{$idx}";
+
+            try {
+                if ($type === 'local') {
+                    $summary[] = "{$label}: kept locally";
+                    log_message("{$label}: local destination (no upload)");
+                    continue;
+                }
+
+                if ($type === 'ftp') {
+                    $res = upload_via_ftp($archivePath, $destination, $dryRun);
+                } elseif ($type === 'sftp') {
+                    $res = upload_via_sftp($archivePath, $destination, $dryRun);
+                } elseif (in_array($type, ['rclone', 'google_drive', 'dropbox', 's3'], true)) {
+                    $res = upload_via_rclone($archivePath, $destination, $dryRun);
+                } else {
+                    throw new RuntimeException('Unsupported destination type: ' . $type);
+                }
+
+                $summary[] = "{$label}: " . $res['message'];
+                log_message("{$label}: " . $res['message']);
+            } catch (Throwable $uploadError) {
+                $summary[] = "{$label}: FAILED — " . $uploadError->getMessage();
+                log_message("{$label}: upload failed — " . $uploadError->getMessage(), true);
+            }
+        }
+
+        apply_retention((string)$config['storage']['local_dir'], (int)$config['storage']['keep_local']);
+    }
+
+    $elapsed = round(microtime(true) - $start, 2);
+    log_message("Backup completed in {$elapsed}s using {$engineUsed} mode.");
+    log_message('════════════════════════════════════════');
+
+    $subject = (string)$config['notification']['subject_success'];
+    $body = "Backup completed successfully\n\n" . implode("\n", $summary) . "\n\nTime: " . date('Y-m-d H:i:s');
     send_notification($subject, $body);
- 
 } catch (Throwable $e) {
     $exitCode = 1;
-    $elapsed  = round(microtime(true) - $startTime, 2);
-    $errorMsg = $e->getMessage();
- 
-    log_message("BACKUP FAILED: {$errorMsg}", true);
+    $elapsed = round(microtime(true) - $start, 2);
+    log_message('BACKUP FAILED: ' . $e->getMessage(), true);
     log_message("Failed after {$elapsed}s", true);
-    log_message("════════════════════════════════════════");
- 
-    $subject = $config['notification']['subject_failure']
-        ?? '[Backup] ALERT — cPanel backup failed';
- 
-    $body = implode(PHP_EOL, [
-        'cPanel Backup — FAILED',
-        str_repeat('─', 40),
-        '',
-        "Host  : {$config['cpanel']['host']}",
-        "User  : {$config['cpanel']['user']}",
-        "Time  : " . date('Y-m-d H:i:s'),
-        '',
-        'Error:',
-        $errorMsg,
-        '',
-        'Please check the backup log for details.',
-        '',
-        '─────────────────────────────────────────',
-        'UnderHost Backup Script — https://underhost.com',
-    ]);
- 
+    log_message('════════════════════════════════════════');
+
+    $subject = (string)$config['notification']['subject_failure'];
+    $body = "Backup failed\n\nError:\n" . $e->getMessage() . "\n\nTime: " . date('Y-m-d H:i:s');
     send_notification($subject, $body);
 }
- 
+
 exit($exitCode);

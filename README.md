@@ -1,285 +1,209 @@
-# Automated cPanel Backup Script (Version 0.3)
+# cPanel Backup Script (Beginner Friendly)
 
-# UnderHost — cPanel Backup Script
+Automated backups for **normal cPanel users** (no root access required).
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![ShellCheck](https://github.com/UnderHost/one-domain/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/UnderHost/one-domain/actions/workflows/shellcheck.yml)
-[![Version](https://img.shields.io/badge/version-2026.0.3-green.svg)](https://github.com/UnderHost/one-domain/blob/main/docs/CHANGELOG.md)
-[![UnderHost](https://img.shields.io/badge/by-UnderHost.com-orange)](https://underhost.com)
-
-> Automated full cPanel backups via the UAPI, delivered to an FTP server or your home directory.  
-> Cron-friendly · Secure · Logged · Email notifications
+This script is designed for shared hosting accounts where:
+- You can run cron jobs in cPanel
+- Your files are outside `public_html`
+- Your host may block cPanel UAPI tokens
 
 ---
 
-## Features
+## What this script can do
 
-- **FTP or home directory** backup destinations
-- **cPanel UAPI** authentication via API tokens (no password storage)
-- **Email notifications** on success and failure
-- **Rotating log files** — configurable size and history depth
-- **Dry-run mode** — test your config without triggering a real backup
-- **Proper exit codes** — integrates cleanly with cron monitoring
-- **CLI-only execution** — cannot be triggered via a web request
+1. **Try cPanel UAPI first** (if token is available)
+2. **Fallback to native PHP backup** when UAPI is blocked
+3. Create local backup archive (`.zip` or `.tar.gz`)
+4. Upload backups to one or more destinations:
+   - Local (keep in your account)
+   - FTP
+   - SFTP (if `ssh2` extension exists)
+   - Google Drive (via `rclone`)
+   - Dropbox (via `rclone`)
+   - S3-compatible storage (via `rclone`)
+5. Send success/failure email
+6. Rotate logs and keep a limited number of local backups
 
 ---
 
 ## Requirements
 
-| Requirement | Minimum |
-|---|---|
-| PHP | 7.4+ |
-| PHP extension | `curl` |
-| cPanel | Any version supporting UAPI |
-| Access | cPanel API Token |
+- PHP 7.4+
+- cPanel cron access
+- Script stored outside `public_html`
+- Optional:
+  - `curl` extension for UAPI mode
+  - `ftp` extension for FTP upload
+  - `ssh2` extension for SFTP upload
+  - `rclone` binary for Google Drive / Dropbox / S3 (and generic cloud remotes)
 
 ---
 
-## Installation
+## Folder layout (recommended)
 
-### 1. Download the files
-
-```bash
-# Via git
-git clone https://github.com/UnderHost/cPanel-Backup.git
-cd cPanel-Backup
-
-# Or download the zip from GitHub and extract it
-```
-
-### 2. Place files outside `public_html`
-
-```
+```text
 /home/your_cpanel_user/
-├── backups/           ← store the script here, NOT inside public_html
+├── backups/
 │   ├── backup.php
-│   ├── config.php     ← your private config (never commit this)
+│   ├── config.php
 │   ├── config.php.example
-│   └── logs/          ← created automatically on first run
+│   ├── logs/
+│   ├── artifacts/
+│   └── tmp/
 └── public_html/
 ```
 
-### 3. Set permissions
+---
 
-```bash
-chmod 750 /home/your_cpanel_user/backups/
-chmod 640 /home/your_cpanel_user/backups/config.php
-```
+## Quick Start (non-technical)
 
-### 4. Configure
+### 1) Install files
+
+Upload all script files to a folder like:
+
+`/home/your_cpanel_user/backups/`
+
+> Do not place this script inside `public_html`.
+
+### 2) Configure
 
 ```bash
 cp config.php.example config.php
-nano config.php   # or edit via cPanel File Manager → Code Edit
 ```
 
-Fill in your cPanel credentials, FTP details, and notification email.  
-See [Configuration](#configuration) below for all options.
+Open `config.php` and edit:
+- `engine` (`auto` is recommended)
+- `native.home_dir`
+- `native.include_paths`
+- `native.databases` (optional but recommended)
+- `destinations`
+- notification email
 
----
-
-## Configuration
-
-Copy `config.php.example` to `config.php` and edit it:
-
-```php
-<?php
-return [
-
-    'cpanel' => [
-        'host'       => 'your-domain.com',       // cPanel hostname (no https://)
-        'user'       => 'cpanel_username',
-        'token'      => 'YOUR_API_TOKEN',         // WHM → Manage API Tokens
-        'port'       => 2083,                     // 2083 = SSL (recommended)
-        'timeout'    => 300,
-        'ssl_verify' => true,
-    ],
-
-    'backup' => [
-        'type' => 'ftp',                          // 'ftp' or 'homedir'
-    ],
-
-    'ftp' => [
-        'host'    => 'ftp.backup-server.com',
-        'user'    => 'ftp_username',
-        'pass'    => 'ftp_password',
-        'port'    => 21,
-        'path'    => '/backups',
-        'passive' => true,
-    ],
-
-    'notification' => [
-        'email' => 'admin@your-domain.com',
-        'from'  => 'backup@your-domain.com',
-    ],
-
-    'logging' => [
-        'enabled'  => true,
-        'file'     => __DIR__ . '/logs/backup.log',
-        'max_size' => 2097152,  // 2 MB before rotation
-        'keep'     => 5,        // rotated files to retain
-    ],
-
-];
-```
-
-### Generating a cPanel API Token
-
-1. Log in to **cPanel**
-2. Go to **Security → Manage API Tokens**
-3. Click **Create**
-4. Name it (e.g. `backup-script`) and click **Create**
-5. Copy the token into `config.php` → `cpanel.token`
-
-> **Tip:** Tokens are scoped per account and don't require storing your cPanel password.
-
----
-
-## Usage
-
-### Manual run
-
-```bash
-/usr/local/bin/php /home/your_cpanel_user/backups/backup.php
-```
-
-### Dry run (no backup triggered — tests config and logs only)
+### 3) Run once manually
 
 ```bash
 /usr/local/bin/php /home/your_cpanel_user/backups/backup.php --dry-run
+/usr/local/bin/php /home/your_cpanel_user/backups/backup.php
 ```
 
-### Custom config path
+### 4) Add cron job in cPanel
 
-```bash
-/usr/local/bin/php backup.php --config=/etc/mybackup/config.php
+Daily at 2 AM:
+
+```cron
+0 2 * * * /usr/local/bin/php /home/your_cpanel_user/backups/backup.php >> /dev/null 2>&1
 ```
-
-### Exit codes
-
-| Code | Meaning |
-|------|---------|
-| `0`  | Success |
-| `1`  | Failure (config error, API error, cURL error) |
 
 ---
 
-## Automation with Cron
+## Engine modes
 
-### Set up in cPanel
+### `engine = auto` (recommended)
+- Uses UAPI if available and working.
+- Automatically falls back to native backup if UAPI fails.
 
-1. Log in to cPanel → **Advanced → Cron Jobs**
-2. Add a new cron job
+### `engine = uapi`
+- Force cPanel UAPI backup trigger.
+- Fails if host blocks API token or endpoint.
 
-### Recommended schedules
-
-| Frequency | Cron expression | Notes |
-|-----------|----------------|-------|
-| Daily     | `0 2 * * *`    | Runs at 2:00 AM every day |
-| Weekly    | `0 2 * * 0`    | Runs at 2:00 AM every Sunday |
-| Monthly   | `0 2 1 * *`    | Runs at 2:00 AM on the 1st |
-
-### Cron command
-
-```
-0 2 * * *  /usr/local/bin/php /home/YOUR_USER/backups/backup.php >> /dev/null 2>&1
-```
-
-> The script writes to its own log file — piping to `/dev/null` is fine.  
-> Remove `>> /dev/null 2>&1` temporarily if you want cPanel to email you the raw output.
+### `engine = native`
+- Never calls UAPI.
+- Uses pure PHP backup logic:
+  - Copies selected folders
+  - Dumps selected MySQL databases
+  - Packages everything into one archive
 
 ---
 
-## Logs
+## Destinations
 
-Log files are written to `logs/backup.log` (relative to the script, or the absolute path in config).
+You can enable **multiple** destinations at once.
 
+### Local
+Keeps archives in `storage.local_dir`.
+
+### FTP
+Uses PHP FTP extension.
+
+### SFTP
+Uses PHP `ssh2` extension.
+
+### Google Drive / Dropbox / S3
+Uses `rclone` remote config. Set destination type to `google_drive`, `dropbox`, `s3`, or `rclone`.
+
+Example destination:
+
+```php
+[
+  'name' => 'Google Drive',
+  'type' => 'google_drive',
+  'enabled' => true,
+  'remote' => 'gdrive',
+  'path' => 'cPanel-Backups',
+]
 ```
-[2025-03-27 02:00:01] [INFO]  ════════════════════════════════════════
-[2025-03-27 02:00:01] [INFO]  UnderHost cPanel Backup — starting
-[2025-03-27 02:00:01] [INFO]  Backup type    : ftp
-[2025-03-27 02:00:01] [INFO]  Destination    : FTP (ftp.backup-server.com:21)
-[2025-03-27 02:00:02] [INFO]  Sending backup request to cPanel UAPI…
-[2025-03-27 02:00:03] [INFO]  Backup request accepted by cPanel
-[2025-03-27 02:00:03] [INFO]  Completed in 2.14s
+
+---
+
+## Database backup notes
+
+In native mode, add each database in `native.databases`:
+
+```php
+[
+  'name' => 'cpuser_wpdb',
+  'host' => 'localhost',
+  'port' => 3306,
+  'user' => 'cpuser_wpuser',
+  'pass' => 'your-db-password',
+]
 ```
 
-Logs rotate automatically when they exceed `max_size`, keeping the last `keep` copies.
+If `databases` is empty, only files are backed up.
+
+---
+
+## Logs and retention
+
+- Logs are saved to `logging.file`
+- Log rotation: `logging.max_size` + `logging.keep`
+- Local backup retention: `storage.keep_local`
 
 ---
 
 ## Troubleshooting
 
-### `Config file not found`
-```
-[FATAL] Config file not found: /home/user/backups/config.php
-```
-Run: `cp config.php.example config.php` then edit it.
+### UAPI not allowed by hosting company
+Use:
 
----
-
-### `Missing required config: cPanel API token`
-You haven't filled in `cpanel.token`. Generate one in cPanel → Security → Manage API Tokens.
-
----
-
-### `cURL error #6: Could not resolve host`
-The `cpanel.host` value is wrong or DNS is unavailable from this server.
-
----
-
-### `cPanel API returned HTTP 401`
-Your API token is invalid, expired, or the username doesn't match. Regenerate the token in cPanel.
-
----
-
-### `cURL error` — SSL issues
-If your cPanel uses a self-signed certificate, set `'ssl_verify' => false` in config.  
-Do **not** disable SSL verification on production servers unless absolutely necessary.
-
----
-
-### FTP connection issues
-- Test your FTP credentials manually with an FTP client first
-- Try `'passive' => true` (most firewalls require passive mode)
-- Check that the remote `path` exists on the FTP server
-
----
-
-## Security
-
-- **Store config outside `public_html`** — it contains credentials
-- **Set `chmod 640 config.php`** — readable only by owner and group
-- **Use API tokens** instead of cPanel passwords
-- **Keep `ssl_verify` enabled** in production
-- **Rotate FTP passwords** periodically
-- Add `config.php` and `logs/` to `.gitignore`
-
----
-
-## .gitignore
-
-```gitignore
-config.php
-logs/
-*.log
-*.log.*
+```php
+'engine' => 'native'
 ```
 
+### Google Drive / Dropbox / S3 upload fails
+- Make sure `rclone` is installed on your hosting environment
+- Confirm the remote name in config (`remote`)
+- Test command in terminal (if shell access exists):
+  `rclone lsd <remote>:`
+
+### SFTP upload fails
+Your hosting PHP may not include `ssh2` extension. Use FTP or rclone-based destination instead.
+
+### Script works manually but not in cron
+Use absolute paths in cron and config.
+
 ---
 
-## Support
+## Security tips
 
-- 📝 [Open a GitHub Issue](https://github.com/UnderHost/cPanel-Backup/issues)
-- 📧 [UnderHost Support](https://underhost.com/contact.php)
-- 🌐 [UnderHost - Managed Backup Solutions](https://underhost.com/managed-hosting.php)
+- Keep script and config outside `public_html`
+- Use file permissions: `chmod 640 config.php`
+- Use strong destination passwords
+- Do not commit real credentials to Git
+- Test restore process regularly
 
 ---
 
 ## License
 
-MIT - see [LICENSE](LICENSE) for details.
-
----
-
-*Maintained by [UnderHost](https://underhost.com) - Reliable Offshore Hosting Solutions*
+MIT
