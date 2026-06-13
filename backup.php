@@ -49,6 +49,8 @@ $defaults = [
         'port' => 2083,
         'timeout' => 300,
         'ssl_verify' => true,
+        'backup_destination' => 'auto', // auto|homedir|ftp
+        'homedir' => 'include', // include|skip
     ],
     'native' => [
         'home_dir' => getenv('HOME') ?: dirname(__DIR__),
@@ -160,6 +162,14 @@ function validate_config(array $config): array
         $errors[] = "engine must be auto, uapi, or native";
     }
 
+    if (!in_array($config['cpanel']['backup_destination'], ['auto', 'homedir', 'ftp'], true)) {
+        $errors[] = "cpanel.backup_destination must be auto, homedir, or ftp";
+    }
+
+    if (!in_array($config['cpanel']['homedir'], ['include', 'skip'], true)) {
+        $errors[] = "cpanel.homedir must be include or skip";
+    }
+
     if (empty($config['destinations']) || !is_array($config['destinations'])) {
         $errors[] = 'destinations must be a non-empty array';
     }
@@ -175,22 +185,132 @@ function can_use_uapi(array $config): bool
         && extension_loaded('curl');
 }
 
-function trigger_uapi_homedir_backup(array $config, bool $dryRun): array
+function enabled_destinations(array $config): array
+{
+    return array_values(array_filter(
+        (array)($config['destinations'] ?? []),
+        static fn($destination): bool => (($destination['enabled'] ?? true) !== false)
+    ));
+}
+
+function select_uapi_backup_plan(array $config): ?array
+{
+    $requested = strtolower((string)($config['cpanel']['backup_destination'] ?? 'auto'));
+    $destinations = enabled_destinations($config);
+    $ftpDestinations = array_values(array_filter(
+        $destinations,
+        static fn($destination): bool => strtolower((string)($destination['type'] ?? 'local')) === 'ftp'
+    ));
+    $nonLocalDestinations = array_values(array_filter(
+        $destinations,
+        static fn($destination): bool => strtolower((string)($destination['type'] ?? 'local')) !== 'local'
+    ));
+
+    if ($requested === 'homedir') {
+        return [
+            'function' => 'fullbackup_to_homedir',
+            'params' => uapi_common_backup_params($config),
+            'label' => 'home directory',
+        ];
+    }
+
+    if ($requested === 'ftp') {
+        if ($ftpDestinations === []) {
+            throw new InvalidArgumentException('cpanel.backup_destination is ftp, but no enabled FTP destination is configured.');
+        }
+
+        return uapi_ftp_backup_plan($config, $ftpDestinations[0]);
+    }
+
+    if ($requested !== 'auto') {
+        throw new InvalidArgumentException('cpanel.backup_destination must be auto, homedir, or ftp.');
+    }
+
+    if ($nonLocalDestinations === []) {
+        return [
+            'function' => 'fullbackup_to_homedir',
+            'params' => uapi_common_backup_params($config),
+            'label' => 'home directory',
+        ];
+    }
+
+    if (count($nonLocalDestinations) === count($ftpDestinations) && $ftpDestinations !== []) {
+        return uapi_ftp_backup_plan($config, $ftpDestinations[0]);
+    }
+
+    return null;
+}
+
+function uapi_common_backup_params(array $config): array
+{
+    $params = [];
+    $email = trim((string)($config['notification']['email'] ?? ''));
+    if ($email !== '') {
+        $params['email'] = $email;
+    }
+
+    $homedir = strtolower((string)($config['cpanel']['homedir'] ?? 'include'));
+    if (in_array($homedir, ['include', 'skip'], true)) {
+        $params['homedir'] = $homedir;
+    }
+
+    return $params;
+}
+
+function uapi_ftp_backup_plan(array $config, array $destination): array
+{
+    foreach (['host', 'user', 'pass'] as $field) {
+        if (trim((string)($destination[$field] ?? '')) === '') {
+            throw new InvalidArgumentException("FTP destination for cPanel UAPI requires {$field}.");
+        }
+    }
+
+    $params = uapi_common_backup_params($config) + [
+        'host' => (string)$destination['host'],
+        'username' => (string)$destination['user'],
+        'password' => (string)$destination['pass'],
+        'port' => (int)($destination['port'] ?? 21),
+        'variant' => !empty($destination['passive']) ? 'passive' : 'active',
+    ];
+
+    $directory = trim((string)($destination['path'] ?? ''));
+    if ($directory !== '') {
+        $params['directory'] = $directory;
+    }
+
+    return [
+        'function' => 'fullbackup_to_ftp',
+        'params' => $params,
+        'label' => 'FTP destination ' . ((string)($destination['name'] ?? $destination['host'])),
+    ];
+}
+
+function cpanel_uapi_request(array $config, string $function, array $params, bool $dryRun): array
 {
     $cpanel = $config['cpanel'];
-    $url = "https://{$cpanel['host']}:{$cpanel['port']}/execute/Backup/fullbackup_to_homedir";
+    $query = http_build_query($params);
+    $url = "https://{$cpanel['host']}:{$cpanel['port']}/execute/Backup/{$function}";
+    if ($query !== '') {
+        $url .= '?' . $query;
+    }
 
     if ($dryRun) {
-        log_message("[DRY-RUN] UAPI request: {$url}");
-        return ['status' => 'ok', 'mode' => 'uapi', 'message' => 'Dry run'];
+        $safeParams = $params;
+        foreach (['password', 'pass', 'token'] as $secretKey) {
+            if (isset($safeParams[$secretKey])) {
+                $safeParams[$secretKey] = '[redacted]';
+            }
+        }
+
+        log_message("[DRY-RUN] UAPI GET /Backup/{$function} " . json_encode($safeParams, JSON_UNESCAPED_SLASHES));
+        return ['result' => ['status' => 1, 'data' => ['pid' => 'dry-run']]];
     }
 
     $ch = curl_init();
     curl_setopt_array($ch, [
         CURLOPT_URL => $url,
         CURLOPT_HTTPHEADER => ["Authorization: cpanel {$cpanel['user']}:{$cpanel['token']}"] ,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => http_build_query(['email' => $config['notification']['email'] ?? '']),
+        CURLOPT_HTTPGET => true,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_SSL_VERIFYPEER => (bool)$cpanel['ssl_verify'],
         CURLOPT_SSL_VERIFYHOST => (bool)$cpanel['ssl_verify'] ? 2 : 0,
@@ -210,14 +330,36 @@ function trigger_uapi_homedir_backup(array $config, bool $dryRun): array
 
     $decoded = json_decode((string)$response, true);
     if ($http !== 200 || !is_array($decoded)) {
-        throw new RuntimeException("UAPI failed with HTTP {$http}");
+        throw new RuntimeException("UAPI {$function} failed with HTTP {$http}");
     }
 
-    if (!empty($decoded['errors'])) {
-        throw new RuntimeException('UAPI errors: ' . implode('; ', $decoded['errors']));
+    $result = $decoded['result'] ?? [];
+    $errors = array_filter((array)($result['errors'] ?? $decoded['errors'] ?? []));
+    if ((int)($result['status'] ?? 0) !== 1 || $errors !== []) {
+        throw new RuntimeException('UAPI ' . $function . ' errors: ' . implode('; ', $errors));
     }
 
-    return ['status' => 'ok', 'mode' => 'uapi', 'message' => 'Backup request accepted'];
+    return $decoded;
+}
+
+function trigger_uapi_backup(array $config, bool $dryRun): array
+{
+    $plan = select_uapi_backup_plan($config);
+    if ($plan === null) {
+        throw new RuntimeException('No cPanel UAPI full-backup endpoint matches the enabled destinations; native mode is required for this destination mix.');
+    }
+
+    $decoded = cpanel_uapi_request($config, $plan['function'], $plan['params'], $dryRun);
+    $pid = (string)($decoded['result']['data']['pid'] ?? '');
+
+    return [
+        'status' => 'ok',
+        'mode' => 'uapi',
+        'uapi_function' => $plan['function'],
+        'destination_label' => $plan['label'],
+        'pid' => $pid,
+        'message' => 'Backup request accepted' . ($pid !== '' ? " (pid {$pid})" : ''),
+    ];
 }
 
 function resolve_path(string $homeDir, string $path): string
@@ -635,9 +777,13 @@ try {
 
     if ($config['engine'] === 'uapi' || ($config['engine'] === 'auto' && can_use_uapi($config))) {
         try {
-            $result = trigger_uapi_homedir_backup($config, $dryRun);
+            $result = trigger_uapi_backup($config, $dryRun);
             $engineUsed = 'uapi';
-            $summary[] = 'UAPI backup trigger accepted by cPanel.';
+            $summary[] = 'UAPI backup trigger accepted by cPanel: Backup::' . ($result['uapi_function'] ?? 'unknown');
+            $summary[] = 'Destination: ' . ($result['destination_label'] ?? 'cPanel-managed destination');
+            if (!empty($result['pid'])) {
+                $summary[] = 'cPanel task PID: ' . $result['pid'];
+            }
         } catch (Throwable $uapiError) {
             if ($config['engine'] === 'uapi') {
                 throw $uapiError;
