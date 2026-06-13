@@ -1,9 +1,9 @@
 # cPanel Backup Script (Beginner Friendly)
-# Automated cPanel Backup Script (Version 0.4)
+# Automated cPanel Backup Script (Version 0.5)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![ShellCheck](https://github.com/UnderHost/one-domain/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/UnderHost/one-domain/actions/workflows/shellcheck.yml)
-[![Version](https://img.shields.io/badge/version-2026.0.4-green.svg)](https://github.com/UnderHost/one-domain/blob/main/docs/CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2026.0.5-green.svg)](https://github.com/UnderHost/one-domain/blob/main/docs/CHANGELOG.md)
 [![UnderHost](https://img.shields.io/badge/by-UnderHost.com-orange)](https://underhost.com)
 
 This PHP script automates full cPanel backups and transfers them to your preferred destination (FTP server or home directory). Designed for reliability and security, it's perfect for website owners and administrators.
@@ -20,6 +20,8 @@ This script is designed for shared hosting accounts where:
 ## What this script can do
 
 1. **Try cPanel UAPI first** (if token is available)
+   - `Backup::fullbackup_to_homedir` for cPanel-managed home-directory backups
+   - `Backup::fullbackup_to_ftp` when an enabled FTP destination is configured
 2. **Fallback to native PHP backup** when UAPI is blocked
 3. Create local backup archive (`.zip` or `.tar.gz`)
 4. Upload backups to one or more destinations:
@@ -108,11 +110,15 @@ Daily at 2 AM:
 
 ### `engine = auto` (recommended)
 - Uses UAPI if available and working.
+- If only local/home-dir storage is enabled, cPanel creates the full backup in the account home directory.
+- If FTP is the enabled remote destination, cPanel transfers the full backup directly to FTP.
 - Automatically falls back to native backup if UAPI fails.
 
 ### `engine = uapi`
 - Force cPanel UAPI backup trigger.
 - Fails if host blocks API token or endpoint.
+- Set `cpanel.backup_destination` to `homedir`, `ftp`, or `auto`.
+- UAPI FTP mode uses the first enabled FTP destination.
 
 ### `engine = native`
 - Never calls UAPI.
@@ -131,7 +137,9 @@ You can enable **multiple** destinations at once.
 Keeps archives in `storage.local_dir`.
 
 ### FTP
-Uses PHP FTP extension.
+In UAPI mode, cPanel can transfer the full account backup directly via `Backup::fullbackup_to_ftp`.
+
+In native mode, the script creates a local archive first and uploads it with PHP's FTP extension.
 
 ### SFTP
 Uses PHP `ssh2` extension.
