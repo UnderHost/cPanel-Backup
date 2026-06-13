@@ -22,6 +22,14 @@ return [
         'port'       => 2083,
         'timeout'    => 300,
         'ssl_verify' => true,
+
+        // auto    = use cPanel UAPI home-dir backup unless an FTP destination is enabled
+        // homedir = force Backup::fullbackup_to_homedir
+        // ftp     = force Backup::fullbackup_to_ftp using the first enabled FTP destination
+        'backup_destination' => 'auto',
+
+        // cPanel UAPI full-backup option: include or skip the account home directory.
+        'homedir' => 'include',
     ],
 
     // Used only in native mode (or when auto falls back to native)
